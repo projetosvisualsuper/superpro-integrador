@@ -5,6 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { Pool } from 'pg';
 import { Product, SyncHistoryEntry, LogEntry, BlingConfig, SheetsConfig } from '../types';
 
 interface DbSchema {
@@ -43,7 +44,7 @@ const initialDb: DbSchema = {
     clientEmail: '',
     privateKey: '',
     webAppUrl: '',
-    tipoConexao: 'script', // Default to Apps Script Web App
+    tipoConexao: 'script',
     conectado: false,
     modoLocal: false
   },
@@ -106,7 +107,7 @@ const initialDb: DbSchema = {
       codigo: 'PROD001',
       sku: 'CEL-S23-128',
       nome: 'Smartphone Samsung Galaxy S23 128GB',
-      descricao: 'Smartphone Samsung Galaxy S23 128GB 5G Tela 6.1" Câmera Tripla 50MP',
+      descricao: 'Smartphone Samsung Galaxy S23 128GB 5G Tela 6.1\" Câmera Tripla 50MP',
       categoria: 'Celulares e Smartphones',
       marca: 'Samsung',
       unidade: 'UN',
@@ -130,7 +131,7 @@ const initialDb: DbSchema = {
       codigo: 'PROD002',
       sku: 'NOTE-DELL-I15',
       nome: 'Notebook Dell Inspiron 15',
-      descricao: 'Notebook Dell Inspiron 15 Intel Core i5 8GB 512GB SSD Windows 11 Tela 15.6"',
+      descricao: 'Notebook Dell Inspiron 15 Intel Core i5 8GB 512GB SSD Windows 11 Tela 15.6\"',
       categoria: 'Informática e Notebooks',
       marca: 'Dell',
       unidade: 'UN',
@@ -176,7 +177,18 @@ const initialDb: DbSchema = {
   ]
 };
 
-// Ensure the directory exists
+// PostgreSQL Connection Pool Configuration
+let pool: Pool | null = null;
+if (process.env.DATABASE_URL) {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: false
+    }
+  });
+}
+
+// Ensure local directory exists
 function ensureDirectoryExists(filePath: string) {
   const dirname = path.dirname(filePath);
   if (!fs.existsSync(dirname)) {
@@ -184,7 +196,31 @@ function ensureDirectoryExists(filePath: string) {
   }
 }
 
-export function readDb(): DbSchema {
+export async function readDb(): Promise<DbSchema> {
+  if (pool) {
+    try {
+      // Ensure config table exists
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS integrador_config (
+          id INT PRIMARY KEY DEFAULT 1,
+          data JSONB NOT NULL
+        )
+      `);
+
+      const res = await pool.query('SELECT data FROM integrador_config WHERE id = 1');
+      if (res.rows.length === 0) {
+        // Initialize config row
+        await pool.query('INSERT INTO integrador_config (id, data) VALUES (1, $1)', [JSON.stringify(initialDb)]);
+        return initialDb;
+      }
+      return res.rows[0].data as DbSchema;
+    } catch (error) {
+      console.error('Erro ao conectar ou ler do Supabase PostgreSQL:', error);
+      // Fallback to local files
+    }
+  }
+
+  // Local file fallback
   try {
     ensureDirectoryExists(DB_FILE);
     if (!fs.existsSync(DB_FILE)) {
@@ -194,23 +230,33 @@ export function readDb(): DbSchema {
     const content = fs.readFileSync(DB_FILE, 'utf-8');
     return JSON.parse(content);
   } catch (error) {
-    console.error('Erro ao ler banco de dados JSON:', error);
+    console.error('Erro ao ler banco de dados JSON local:', error);
     return initialDb;
   }
 }
 
-export function writeDb(data: DbSchema): void {
+export async function writeDb(data: DbSchema): Promise<void> {
+  if (pool) {
+    try {
+      await pool.query('INSERT INTO integrador_config (id, data) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET data = $1', [JSON.stringify(data)]);
+      return;
+    } catch (error) {
+      console.error('Erro ao gravar no Supabase PostgreSQL:', error);
+    }
+  }
+
+  // Local file fallback
   try {
     ensureDirectoryExists(DB_FILE);
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
   } catch (error) {
-    console.error('Erro ao gravar no banco de dados JSON:', error);
+    console.error('Erro ao gravar no banco de dados JSON local:', error);
   }
 }
 
 // Helpers to work with DB
-export function addLog(categoria: LogEntry['categoria'], mensagem: string, detalhes?: string) {
-  const db = readDb();
+export async function addLog(categoria: LogEntry['categoria'], mensagem: string, detalhes?: string) {
+  const db = await readDb();
   const newLog: LogEntry = {
     id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
     timestamp: new Date().toISOString(),
@@ -218,22 +264,21 @@ export function addLog(categoria: LogEntry['categoria'], mensagem: string, detal
     mensagem,
     detalhes
   };
-  db.logs.unshift(newLog); // Put new logs at the beginning
-  // Limit logs to last 500 entries to prevent files from growing too large
+  db.logs.unshift(newLog);
   if (db.logs.length > 500) {
     db.logs = db.logs.slice(0, 500);
   }
-  writeDb(db);
+  await writeDb(db);
   return newLog;
 }
 
-export function addHistory(entry: Omit<SyncHistoryEntry, 'id'>) {
-  const db = readDb();
+export async function addHistory(entry: Omit<SyncHistoryEntry, 'id'>) {
+  const db = await readDb();
   const newEntry: SyncHistoryEntry = {
     id: `h-${Date.now()}`,
     ...entry
   };
   db.history.unshift(newEntry);
-  writeDb(db);
+  await writeDb(db);
   return newEntry;
 }

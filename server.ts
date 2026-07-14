@@ -23,13 +23,13 @@ app.use((req, res, next) => {
 });
 
 // Simple Auth Middleware
-const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const authMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Não autorizado. Faça login primeiro.' });
   }
   const email = authHeader.replace('Bearer ', '');
-  const db = readDb();
+  const db = await readDb();
   const userExists = db.users.some(u => u.email === email);
   if (!userExists) {
     return res.status(401).json({ error: 'Usuário inválido ou sessão expirada.' });
@@ -41,52 +41,52 @@ const authMiddleware = (req: express.Request, res: express.Response, next: expre
 // 1. AUTENTICAÇÃO API
 // ==========================================
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
   }
 
-  const db = readDb();
+  const db = await readDb();
   const user = db.users.find(u => u.email === email && u.password === password);
   if (user) {
-    addLog('auth', `Sessão iniciada com sucesso para ${email}`);
+    await addLog('auth', `Sessão iniciada com sucesso para ${email}`);
     return res.json({
       token: email,
       user: { email: user.email, name: user.name }
     });
   } else {
-    addLog('auth', `Falha na tentativa de login para o e-mail: ${email}`);
+    await addLog('auth', `Falha na tentativa de login para o e-mail: ${email}`);
     return res.status(401).json({ error: 'Credenciais inválidas. Verifique o e-mail e a senha digitada.' });
   }
 });
 
-app.get('/api/users', authMiddleware, (req, res) => {
-  const db = readDb();
+app.get('/api/users', authMiddleware, async (req, res) => {
+  const db = await readDb();
   // Remove password field for safety
   const safeUsers = db.users.map(({ email, name }) => ({ email, name }));
   res.json(safeUsers);
 });
 
-app.post('/api/users', authMiddleware, (req, res) => {
+app.post('/api/users', authMiddleware, async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'Nome, E-mail e Senha são obrigatórios.' });
   }
 
-  const db = readDb();
+  const db = await readDb();
   if (db.users.some(u => u.email === email)) {
     return res.status(400).json({ error: 'Um usuário com este e-mail já existe.' });
   }
 
   db.users.push({ name, email, password });
-  writeDb(db);
+  await writeDb(db);
   
-  addLog('auth', `Novo usuário registrado: ${email} (${name})`);
+  await addLog('auth', `Novo usuário registrado: ${email} (${name})`);
   res.json({ email, name });
 });
 
-app.delete('/api/users/:email', authMiddleware, (req, res) => {
+app.delete('/api/users/:email', authMiddleware, async (req, res) => {
   const { email } = req.params;
   const callerHeader = req.headers.authorization;
   const callerEmail = callerHeader ? callerHeader.replace('Bearer ', '') : '';
@@ -95,23 +95,23 @@ app.delete('/api/users/:email', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Você não pode excluir o seu próprio usuário logado.' });
   }
 
-  const db = readDb();
+  const db = await readDb();
   const userIndex = db.users.findIndex(u => u.email === email);
   if (userIndex === -1) {
     return res.status(404).json({ error: 'Usuário não encontrado.' });
   }
 
   const deletedUser = db.users.splice(userIndex, 1)[0];
-  writeDb(db);
+  await writeDb(db);
 
-  addLog('auth', `Usuário excluído: ${email} (${deletedUser.name})`);
+  await addLog('auth', `Usuário excluído: ${email} (${deletedUser.name})`);
   res.json({ status: 'ok', message: `Usuário ${email} excluído com sucesso.` });
 });
 
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', async (req, res) => {
   const authHeader = req.headers.authorization;
   const email = authHeader ? authHeader.replace('Bearer ', '') : 'Usuário';
-  addLog('auth', `Sessão encerrada com sucesso para ${email}`);
+  await addLog('auth', `Sessão encerrada com sucesso para ${email}`);
   res.json({ status: 'ok' });
 });
 
@@ -119,19 +119,19 @@ app.post('/api/auth/logout', (req, res) => {
 // 2. CONFIGURAÇÕES API (Bling / Sheets)
 // ==========================================
 
-app.get('/api/config/bling', authMiddleware, (req, res) => {
-  const db = readDb();
+app.get('/api/config/bling', authMiddleware, async (req, res) => {
+  const db = await readDb();
   res.json(db.blingConfig);
 });
 
-app.post('/api/config/bling', authMiddleware, (req, res) => {
+app.post('/api/config/bling', authMiddleware, async (req, res) => {
   const { clientId, clientSecret, accessToken, refreshToken } = req.body;
   
   if (!clientId || !clientSecret) {
     return res.status(400).json({ error: 'Client ID e Client Secret são obrigatórios.' });
   }
 
-  const db = readDb();
+  const db = await readDb();
   db.blingConfig = {
     clientId,
     clientSecret,
@@ -139,9 +139,9 @@ app.post('/api/config/bling', authMiddleware, (req, res) => {
     refreshToken: refreshToken || '',
     conectado: true
   };
-  writeDb(db);
+  await writeDb(db);
   
-  addLog('bling', 'Configurações de conexão do Bling salvas com sucesso.');
+  await addLog('bling', 'Configurações de conexão do Bling salvas com sucesso.');
   res.json(db.blingConfig);
 });
 
@@ -152,7 +152,7 @@ app.get('/api/auth/bling/callback', async (req, res) => {
     return res.status(400).send('Código de autorização ausente.');
   }
 
-  const db = readDb();
+  const db = await readDb();
   const { clientId, clientSecret } = db.blingConfig;
 
   if (!clientId || !clientSecret) {
@@ -185,9 +185,9 @@ app.get('/api/auth/bling/callback', async (req, res) => {
     db.blingConfig.accessToken = tokenData.access_token;
     db.blingConfig.refreshToken = tokenData.refresh_token || db.blingConfig.refreshToken;
     db.blingConfig.conectado = true;
-    writeDb(db);
+    await writeDb(db);
 
-    addLog('bling', 'Conexão OAuth 2.0 estabelecida com sucesso via redirecionamento.');
+    await addLog('bling', 'Conexão OAuth 2.0 estabelecida com sucesso via redirecionamento.');
 
     // Redirect user back to dashboard setup page
     res.redirect('/');
@@ -197,19 +197,19 @@ app.get('/api/auth/bling/callback', async (req, res) => {
   }
 });
 
-app.get('/api/config/sheets', authMiddleware, (req, res) => {
-  const db = readDb();
+app.get('/api/config/sheets', authMiddleware, async (req, res) => {
+  const db = await readDb();
   res.json(db.sheetsConfig);
 });
 
-app.post('/api/config/sheets', authMiddleware, (req, res) => {
+app.post('/api/config/sheets', authMiddleware, async (req, res) => {
   const { planilhaNome, abaNome, planilhaId, clientEmail, privateKey, webAppUrl, tipoConexao, modoLocal } = req.body;
   
   if (!planilhaNome || !abaNome) {
     return res.status(400).json({ error: 'Nome da planilha e Nome da aba são obrigatórios.' });
   }
 
-  const db = readDb();
+  const db = await readDb();
   db.sheetsConfig = {
     planilhaNome,
     abaNome,
@@ -221,9 +221,9 @@ app.post('/api/config/sheets', authMiddleware, (req, res) => {
     conectado: true,
     modoLocal: tipoConexao === 'local'
   };
-  writeDb(db);
+  await writeDb(db);
   
-  addLog('sheets', `Configurações da Planilha salvas. Tipo de conexão: ${db.sheetsConfig.tipoConexao} | Planilha: "${planilhaNome}" | Aba: "${abaNome}".`);
+  await addLog('sheets', `Configurações da Planilha salvas. Tipo de conexão: ${db.sheetsConfig.tipoConexao} | Planilha: "${planilhaNome}" | Aba: "${abaNome}".`);
   res.json(db.sheetsConfig);
 });
 
@@ -233,7 +233,7 @@ app.post('/api/config/sheets', authMiddleware, (req, res) => {
 
 // Core sync engine function shared between Button and Webhook
 async function runSyncProcess() {
-  const db = readDb();
+  const db = await readDb();
   
   // Set progress state to running
   db.progress = {
@@ -243,10 +243,10 @@ async function runSyncProcess() {
     percentage: 0,
     message: 'Iniciando sincronização com ERP Bling...'
   };
-  writeDb(db);
+  await writeDb(db);
   
   const startTime = Date.now();
-  addLog('bling', 'Iniciando busca de produtos na API do Bling (Com paginação)...');
+  await addLog('bling', 'Iniciando busca de produtos na API do Bling (Com paginação)...');
 
   try {
     // Perform paginated fetching
@@ -255,15 +255,15 @@ async function runSyncProcess() {
       db.blingConfig.clientSecret,
       db.blingConfig.accessToken,
       db.blingConfig.refreshToken,
-      (newTokens) => {
-        const liveDb = readDb();
+      async (newTokens) => {
+        const liveDb = await readDb();
         liveDb.blingConfig.accessToken = newTokens.accessToken;
         liveDb.blingConfig.refreshToken = newTokens.refreshToken;
-        writeDb(liveDb);
-        addLog('bling', 'Tokens de acesso atualizados com sucesso.');
+        await writeDb(liveDb);
+        await addLog('bling', 'Tokens de acesso atualizados com sucesso.');
       },
-      (current, total, percentage, message) => {
-        const liveDb = readDb();
+      async (current, total, percentage, message) => {
+        const liveDb = await readDb();
         liveDb.progress = {
           status: 'sincronizando',
           current,
@@ -271,20 +271,20 @@ async function runSyncProcess() {
           percentage,
           message
         };
-        writeDb(liveDb);
+        await writeDb(liveDb);
         
         // Log periodically
         if (current % 140 === 0 || current === total) {
-          addLog('bling', `Progresso da busca: ${current}/${total} produtos lidos (${percentage}%)...`);
+          await addLog('bling', `Progresso da busca: ${current}/${total} produtos lidos (${percentage}%)...`);
         }
       }
     );
 
     // Save to the database as "clean and rewrite" spreadsheet
-    const finalDb = readDb();
+    const finalDb = await readDb();
     
     if (finalDb.sheetsConfig.tipoConexao !== 'local') {
-      addLog('sheets', `Iniciando gravação na planilha real do Google Sheets (${finalDb.sheetsConfig.planilhaNome}) via ${finalDb.sheetsConfig.tipoConexao}...`);
+      await addLog('sheets', `Iniciando gravação na planilha real do Google Sheets (${finalDb.sheetsConfig.planilhaNome}) via ${finalDb.sheetsConfig.tipoConexao}...`);
       await SheetsService.syncToGoogleSheets(
         finalDb.sheetsConfig.tipoConexao,
         finalDb.sheetsConfig.planilhaId || '',
@@ -294,14 +294,14 @@ async function runSyncProcess() {
         products,
         structures
       );
-      addLog('sheets', `Gravação no Google Sheets concluída com sucesso.`);
+      await addLog('sheets', `Gravação no Google Sheets concluída com sucesso.`);
     } else {
-      addLog('sheets', 'Limpando linhas anteriores da planilha virtual (preservando cabeçalhos)...');
+      await addLog('sheets', 'Limpando linhas anteriores da planilha virtual (preservando cabeçalhos)...');
       
       // Simulate Sheets update latency
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      addLog('sheets', `Gravando ${products.length} produtos atualizados na planilha virtual...`);
+      await addLog('sheets', `Gravando ${products.length} produtos atualizados na planilha virtual...`);
     }
     finalDb.products = products;
     
@@ -320,7 +320,7 @@ async function runSyncProcess() {
       status: 'Sucesso'
     });
     
-    addLog('performance', `Sincronização concluída. ${products.length} produtos atualizados em ${(durationMs / 1000).toFixed(1)} segundos.`);
+    await addLog('performance', `Sincronização concluída. ${products.length} produtos atualizados em ${(durationMs / 1000).toFixed(1)} segundos.`);
 
     finalDb.progress = {
       status: 'sucesso',
@@ -329,12 +329,12 @@ async function runSyncProcess() {
       percentage: 100,
       message: `Sincronização concluída com sucesso! ${products.length} produtos atualizados.`
     };
-    writeDb(finalDb);
+    await writeDb(finalDb);
 
     return { status: 'sucesso', count: products.length, durationMs };
   } catch (error: any) {
     const errorMsg = error.message || 'Erro desconhecido durante a sincronização.';
-    const finalDb = readDb();
+    const finalDb = await readDb();
     finalDb.progress = {
       status: 'erro',
       current: 0,
@@ -342,9 +342,9 @@ async function runSyncProcess() {
       percentage: 0,
       message: `Falha na sincronização: ${errorMsg}`
     };
-    writeDb(finalDb);
+    await writeDb(finalDb);
     
-    addHistory({
+    await addHistory({
       data: new Date().toISOString().split('T')[0],
       hora: new Date().toLocaleTimeString('pt-BR'),
       usuario: 'projetos.visualsuper@gmail.com',
@@ -354,14 +354,14 @@ async function runSyncProcess() {
       mensagemErro: errorMsg
     });
     
-    addLog('error', `Falha na sincronização de produtos: ${errorMsg}`);
+    await addLog('error', `Falha na sincronização de produtos: ${errorMsg}`);
     throw error;
   }
 }
 
 // Endpoint 1: POST /api/sync/start (Triggered by Dashboard Button)
 app.post('/api/sync/start', authMiddleware, async (req, res) => {
-  const db = readDb();
+  const db = await readDb();
   if (db.progress.status === 'sincronizando') {
     return res.status(400).json({ error: 'Uma sincronização já está em andamento.' });
   }
@@ -373,22 +373,22 @@ app.post('/api/sync/start', authMiddleware, async (req, res) => {
 });
 
 // Endpoint 2: GET /api/sync/progress (Poll progression)
-app.get('/api/sync/progress', authMiddleware, (req, res) => {
-  const db = readDb();
+app.get('/api/sync/progress', authMiddleware, async (req, res) => {
+  const db = await readDb();
   res.json(db.progress);
 });
 
 // Endpoint 3: POST /webhook/update-products (Webhook endpoint as requested)
 app.post('/webhook/update-products', async (req, res) => {
   console.log('Webhook de atualização de produtos recebido via POST.');
-  const db = readDb();
+  const db = await readDb();
   
   if (db.progress.status === 'sincronizando') {
-    addLog('bling', 'Chamada recebida no webhook ignorada: uma sincronização já está em andamento.');
+    await addLog('bling', 'Chamada recebida no webhook ignorada: uma sincronização já está em andamento.');
     return res.status(409).json({ error: 'Sync already running.' });
   }
 
-  addLog('bling', 'Webhook /webhook/update-products disparado com sucesso.');
+  await addLog('bling', 'Webhook /webhook/update-products disparado com sucesso.');
   
   // We can trigger synchronously or asynchronously.
   // To prevent HTTP timeouts for webhook, we run it and respond back.
@@ -411,13 +411,13 @@ app.post('/webhook/update-products', async (req, res) => {
 // 4. HISTÓRICO, LOGS E PRODUTOS LIST
 // ==========================================
 
-app.get('/api/sync/history', authMiddleware, (req, res) => {
-  const db = readDb();
+app.get('/api/sync/history', authMiddleware, async (req, res) => {
+  const db = await readDb();
   res.json(db.history);
 });
 
-app.get('/api/sync/logs', authMiddleware, (req, res) => {
-  const db = readDb();
+app.get('/api/sync/logs', authMiddleware, async (req, res) => {
+  const db = await readDb();
   let filteredLogs = db.logs;
   
   const categoria = req.query.categoria as string;
@@ -437,8 +437,8 @@ app.get('/api/sync/logs', authMiddleware, (req, res) => {
   res.json(filteredLogs);
 });
 
-app.get('/api/products', authMiddleware, (req, res) => {
-  const db = readDb();
+app.get('/api/products', authMiddleware, async (req, res) => {
+  const db = await readDb();
   let list = db.products;
   
   const search = req.query.search as string;
@@ -457,8 +457,8 @@ app.get('/api/products', authMiddleware, (req, res) => {
 });
 
 // Reset simulated db data back to initial (useful helper)
-app.post('/api/sync/reset', authMiddleware, (req, res) => {
-  const db = readDb();
+app.post('/api/sync/reset', authMiddleware, async (req, res) => {
+  const db = await readDb();
   db.products = [];
   db.history = [];
   db.logs = [
@@ -476,7 +476,7 @@ app.post('/api/sync/reset', authMiddleware, (req, res) => {
     percentage: 0,
     message: ''
   };
-  writeDb(db);
+  await writeDb(db);
   res.json({ status: 'ok' });
 });
 
