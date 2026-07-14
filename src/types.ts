@@ -60,6 +60,10 @@ export interface SheetsConfig {
   planilhaNome: string;
   planilhaId?: string;
   abaNome: string;
+  clientEmail?: string;
+  privateKey?: string;
+  webAppUrl?: string;
+  tipoConexao: 'local' | 'script' | 'service_account';
   conectado: boolean;
   modoLocal: boolean; // Indicates we are utilizing the local spreadsheet sandbox as requested
 }

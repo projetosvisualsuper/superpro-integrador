@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Info, CheckCircle, XCircle, Link, RefreshCw, KeyRound, Loader2 } from 'lucide-react';
+import { ShieldCheck, Info, CheckCircle, XCircle, Link, RefreshCw, KeyRound, Loader2, Save } from 'lucide-react';
 import { BlingConfig } from '../types';
 
 interface BlingSetupProps {
@@ -62,8 +62,8 @@ export default function BlingSetup({ token, onStatusChange }: BlingSetupProps) {
         body: JSON.stringify({
           clientId,
           clientSecret,
-          accessToken,
-          refreshToken
+          accessToken: '', // Clear simulated token on manual save
+          refreshToken: '' // Clear simulated token on manual save
         })
       });
 
@@ -74,6 +74,8 @@ export default function BlingSetup({ token, onStatusChange }: BlingSetupProps) {
       }
 
       setConfig(data);
+      setAccessToken('');
+      setRefreshToken('');
       setMessage({ type: 'success', text: 'Configurações de conexão do Bling salvas com sucesso!' });
       onStatusChange();
     } catch (err: any) {
@@ -81,42 +83,6 @@ export default function BlingSetup({ token, onStatusChange }: BlingSetupProps) {
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const handleSimulateOAuth = () => {
-    setIsSaving(true);
-    setMessage(null);
-    setTimeout(async () => {
-      try {
-        const randomToken = 'bl_tok_' + Math.random().toString(36).substring(2, 18);
-        const randomRefresh = 'bl_ref_' + Math.random().toString(36).substring(2, 18);
-        
-        const response = await fetch('/api/config/bling', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            clientId: clientId || 'bling_client_id_exemplo_123',
-            clientSecret: clientSecret || 'bling_secret_exemplo_abc',
-            accessToken: randomToken,
-            refreshToken: randomRefresh
-          })
-        });
-
-        const data = await response.json();
-        setConfig(data);
-        setAccessToken(randomToken);
-        setRefreshToken(randomRefresh);
-        setMessage({ type: 'success', text: 'Conexão OAuth 2.0 estabelecida! Tokens gerados e salvos com sucesso.' });
-        onStatusChange();
-      } catch (err: any) {
-        setMessage({ type: 'error', text: 'Falha ao simular fluxo OAuth do Bling.' });
-      } finally {
-        setIsSaving(false);
-      }
-    }, 1200);
   };
 
   if (isLoading) {
@@ -127,7 +93,7 @@ export default function BlingSetup({ token, onStatusChange }: BlingSetupProps) {
     );
   }
 
-  const isConectado = config?.conectado && accessToken !== '';
+  const isConectado = config?.conectado && config?.accessToken && !config.accessToken.includes('exemplo') && !config.accessToken.startsWith('bl_tok_');
 
   return (
     <div className="space-y-6" id="bling-setup-panel">
@@ -169,6 +135,23 @@ export default function BlingSetup({ token, onStatusChange }: BlingSetupProps) {
         </div>
       )}
 
+      {config?.clientId && config?.clientSecret && (
+        <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+          <div className="space-y-1">
+            <span className="font-bold text-indigo-200 text-sm font-display flex items-center gap-1">🔑 Passo Final: Autorizar Aplicativo no Bling</span>
+            <p className="text-xs text-indigo-300">
+              Suas credenciais foram salvas. Agora, clique no botão ao lado para autorizar o integrador a consultar sua conta do Bling.
+            </p>
+          </div>
+          <a
+            href={`https://www.bling.com.br/Api/v3/oauth/authorize?response_type=code&client_id=${config.clientId}&redirect_uri=${encodeURIComponent(`${window.location.origin}/api/auth/bling/callback`)}&state=superpro_oauth_state`}
+            className="inline-flex items-center justify-center px-5 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl transition cursor-pointer shadow-lg shadow-indigo-500/20 text-center"
+          >
+            Autorizar Acesso no Bling
+          </a>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Credentials Form */}
         <div className="lg:col-span-2">
@@ -206,52 +189,13 @@ export default function BlingSetup({ token, onStatusChange }: BlingSetupProps) {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label htmlFor="access-token" className="text-xs text-slate-300 font-medium">
-                  Access Token <span className="text-[10px] text-slate-500 font-normal">(Opcional / Gerado via OAuth)</span>
-                </label>
-                <input
-                  id="access-token"
-                  type="text"
-                  value={accessToken}
-                  onChange={(e) => setAccessToken(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 focus:border-white/20 rounded-xl py-2.5 px-4 text-xs text-slate-300 placeholder-slate-600 outline-none transition font-mono"
-                  placeholder="Gerado automaticamente"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label htmlFor="refresh-token" className="text-xs text-slate-300 font-medium">
-                  Refresh Token <span className="text-[10px] text-slate-500 font-normal">(Opcional / Gerado via OAuth)</span>
-                </label>
-                <input
-                  id="refresh-token"
-                  type="text"
-                  value={refreshToken}
-                  onChange={(e) => setRefreshToken(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 focus:border-white/20 rounded-xl py-2.5 px-4 text-xs text-slate-300 placeholder-slate-600 outline-none transition font-mono"
-                  placeholder="Gerado automaticamente"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t border-white/10">
-              <button
-                type="button"
-                onClick={handleSimulateOAuth}
-                disabled={isSaving}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 disabled:opacity-50 text-xs font-semibold rounded-xl transition cursor-pointer"
-              >
-                {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                Conectar ao Bling (OAuth 2.0)
-              </button>
-              
+            <div className="flex justify-end pt-4 border-t border-white/10">
               <button
                 type="submit"
                 disabled={isSaving}
-                className="inline-flex items-center justify-center px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/10 disabled:opacity-50 text-white text-xs font-semibold rounded-xl transition cursor-pointer"
+                className="inline-flex items-center justify-center px-5 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold rounded-xl transition cursor-pointer shadow-lg shadow-indigo-500/10"
               >
+                {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
                 Salvar Credenciais
               </button>
             </div>
@@ -284,10 +228,13 @@ export default function BlingSetup({ token, onStatusChange }: BlingSetupProps) {
           <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-2xl p-5 flex gap-3 text-xs text-indigo-300 leading-relaxed shadow-xl">
             <Info className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
             <div>
-              <span className="font-bold text-indigo-200 font-display">Como obter estas chaves?</span>
+              <span className="font-bold text-indigo-200 font-display">Como configurar o Redirect URL?</span>
               <p className="mt-1 font-sans">
-                Acesse o painel do desenvolvedor no Bling ERP, crie um novo aplicativo, defina o redirect URI fornecido pelo painel e copie o Client ID e Client Secret.
+                Acesse o painel do desenvolvedor no Bling ERP, edite seu aplicativo e defina a <b>URL de Callback</b> exatamente como abaixo:
               </p>
+              <code className="block bg-[#0c0e12] p-2 rounded border border-white/10 mt-2 font-mono text-[10px] break-all select-all text-indigo-200">
+                {window.location.origin}/api/auth/bling/callback
+              </code>
             </div>
           </div>
         </div>

@@ -8,7 +8,7 @@ import path from 'path';
 import { Product, SyncHistoryEntry, LogEntry, BlingConfig, SheetsConfig } from '../types';
 
 interface DbSchema {
-  users: Array<{ email: string; name: string }>;
+  users: Array<{ email: string; name: string; password?: string }>;
   blingConfig: BlingConfig;
   sheetsConfig: SheetsConfig;
   progress: {
@@ -27,7 +27,7 @@ const DB_FILE = path.join(process.cwd(), 'data', 'db.json');
 
 const initialDb: DbSchema = {
   users: [
-    { email: 'projetos.visualsuper@gmail.com', name: 'Administrador' }
+    { email: 'projetos.visualsuper@gmail.com', name: 'Administrador', password: 'admin123' }
   ],
   blingConfig: {
     clientId: 'bling_client_id_exemplo_123',
@@ -37,10 +37,15 @@ const initialDb: DbSchema = {
     conectado: false
   },
   sheetsConfig: {
-    planilhaNome: 'Planilha de Produtos ERP Bling',
+    planilhaNome: 'Produtos e Composição Bling',
+    planilhaId: '1C-w7eEjn0w2Zp24yLr-tB-u-uBTYbnSk6zOfbUtoJ8Y',
     abaNome: 'Produtos',
-    conectado: true,
-    modoLocal: true
+    clientEmail: '',
+    privateKey: '',
+    webAppUrl: '',
+    tipoConexao: 'script', // Default to Apps Script Web App
+    conectado: false,
+    modoLocal: false
   },
   progress: {
     status: 'idle',

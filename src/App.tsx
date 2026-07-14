@@ -26,6 +26,7 @@ import DashboardView from './components/DashboardView';
 import BlingSetup from './components/BlingSetup';
 import SheetsSetup from './components/SheetsSetup';
 import LogViewer from './components/LogViewer';
+import UsersSetup from './components/UsersSetup';
 
 export default function App() {
   // Authentication states
@@ -115,7 +116,8 @@ export default function App() {
     { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard },
     { id: 'bling', label: 'ERP Bling', icon: Link, status: navMetrics.bling },
     { id: 'sheets', label: 'Planilha Virtual', icon: FileSpreadsheet, status: navMetrics.sheets },
-    { id: 'logs', label: 'Logs de Eventos', icon: Terminal }
+    { id: 'logs', label: 'Logs de Eventos', icon: Terminal },
+    { id: 'usuarios', label: 'Usuários', icon: User }
   ];
 
   const getTitle = () => {
@@ -124,12 +126,13 @@ export default function App() {
       case 'bling': return 'Parâmetros Bling ERP';
       case 'sheets': return 'Aba de Planilhas e Sincronização';
       case 'logs': return 'Terminal do Sistema';
+      case 'usuarios': return 'Gestão de Usuários';
       default: return 'VS SuperPro - Integrador';
     }
   };
 
   return (
-    <div className="min-h-screen font-sans bg-[#0c0e12] text-slate-200 overflow-x-hidden relative flex">
+    <div className="h-screen font-sans bg-[#0c0e12] text-slate-200 overflow-hidden relative flex">
       {/* Glow Effects */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-500/10 rounded-full blur-[120px]" />
@@ -315,6 +318,13 @@ export default function App() {
           {activeTab === 'logs' && (
             <LogViewer 
               token={token} 
+            />
+          )}
+
+          {activeTab === 'usuarios' && (
+            <UsersSetup 
+              token={token}
+              currentUserEmail={user?.email}
             />
           )}
         </main>

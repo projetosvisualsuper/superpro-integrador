@@ -8,6 +8,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { readDb, writeDb, addLog, addHistory } from './src/database/db';
 import { BlingService } from './src/services/bling.service';
+import { SheetsService } from './src/services/sheets.service';
 
 const app = express();
 const PORT = 3000;
@@ -46,17 +47,65 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
   }
 
-  // Check the email matching the user email and password
-  if (email === 'projetos.visualsuper@gmail.com' && password === 'admin123') {
+  const db = readDb();
+  const user = db.users.find(u => u.email === email && u.password === password);
+  if (user) {
     addLog('auth', `Sessão iniciada com sucesso para ${email}`);
     return res.json({
       token: email,
-      user: { email, name: 'Administrador' }
+      user: { email: user.email, name: user.name }
     });
   } else {
     addLog('auth', `Falha na tentativa de login para o e-mail: ${email}`);
-    return res.status(401).json({ error: 'Credenciais inválidas. Use o e-mail cadastrado e a senha padrão (admin123).' });
+    return res.status(401).json({ error: 'Credenciais inválidas. Verifique o e-mail e a senha digitada.' });
   }
+});
+
+app.get('/api/users', authMiddleware, (req, res) => {
+  const db = readDb();
+  // Remove password field for safety
+  const safeUsers = db.users.map(({ email, name }) => ({ email, name }));
+  res.json(safeUsers);
+});
+
+app.post('/api/users', authMiddleware, (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Nome, E-mail e Senha são obrigatórios.' });
+  }
+
+  const db = readDb();
+  if (db.users.some(u => u.email === email)) {
+    return res.status(400).json({ error: 'Um usuário com este e-mail já existe.' });
+  }
+
+  db.users.push({ name, email, password });
+  writeDb(db);
+  
+  addLog('auth', `Novo usuário registrado: ${email} (${name})`);
+  res.json({ email, name });
+});
+
+app.delete('/api/users/:email', authMiddleware, (req, res) => {
+  const { email } = req.params;
+  const callerHeader = req.headers.authorization;
+  const callerEmail = callerHeader ? callerHeader.replace('Bearer ', '') : '';
+
+  if (email === callerEmail) {
+    return res.status(400).json({ error: 'Você não pode excluir o seu próprio usuário logado.' });
+  }
+
+  const db = readDb();
+  const userIndex = db.users.findIndex(u => u.email === email);
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'Usuário não encontrado.' });
+  }
+
+  const deletedUser = db.users.splice(userIndex, 1)[0];
+  writeDb(db);
+
+  addLog('auth', `Usuário excluído: ${email} (${deletedUser.name})`);
+  res.json({ status: 'ok', message: `Usuário ${email} excluído com sucesso.` });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -96,13 +145,65 @@ app.post('/api/config/bling', authMiddleware, (req, res) => {
   res.json(db.blingConfig);
 });
 
+// OAuth Callback for Bling API v3
+app.get('/api/auth/bling/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) {
+    return res.status(400).send('Código de autorização ausente.');
+  }
+
+  const db = readDb();
+  const { clientId, clientSecret } = db.blingConfig;
+
+  if (!clientId || !clientSecret) {
+    return res.status(400).send('Client ID e Client Secret não configurados no integrador. Configure-os primeiro.');
+  }
+
+  try {
+    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/bling/callback`;
+    
+    const tokenResponse = await fetch('https://www.bling.com.br/Api/v3/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${credentials}`
+      },
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        code: String(code),
+        redirect_uri: redirectUri
+      })
+    });
+
+    if (!tokenResponse.ok) {
+      throw new Error(`Erro na troca de código do Bling: ${tokenResponse.status} - ${await tokenResponse.text()}`);
+    }
+
+    const tokenData = await tokenResponse.json();
+    
+    db.blingConfig.accessToken = tokenData.access_token;
+    db.blingConfig.refreshToken = tokenData.refresh_token || db.blingConfig.refreshToken;
+    db.blingConfig.conectado = true;
+    writeDb(db);
+
+    addLog('bling', 'Conexão OAuth 2.0 estabelecida com sucesso via redirecionamento.');
+
+    // Redirect user back to dashboard setup page
+    res.redirect('/');
+  } catch (error: any) {
+    console.error('Erro no callback do Bling:', error);
+    res.status(500).send(`Erro ao conectar ao Bling: ${error.message}`);
+  }
+});
+
 app.get('/api/config/sheets', authMiddleware, (req, res) => {
   const db = readDb();
   res.json(db.sheetsConfig);
 });
 
 app.post('/api/config/sheets', authMiddleware, (req, res) => {
-  const { planilhaNome, abaNome } = req.body;
+  const { planilhaNome, abaNome, planilhaId, clientEmail, privateKey, webAppUrl, tipoConexao, modoLocal } = req.body;
   
   if (!planilhaNome || !abaNome) {
     return res.status(400).json({ error: 'Nome da planilha e Nome da aba são obrigatórios.' });
@@ -112,12 +213,17 @@ app.post('/api/config/sheets', authMiddleware, (req, res) => {
   db.sheetsConfig = {
     planilhaNome,
     abaNome,
+    planilhaId: planilhaId || '',
+    clientEmail: clientEmail || '',
+    privateKey: privateKey || '',
+    webAppUrl: webAppUrl || '',
+    tipoConexao: tipoConexao || (modoLocal ? 'local' : 'service_account'),
     conectado: true,
-    modoLocal: true
+    modoLocal: tipoConexao === 'local'
   };
   writeDb(db);
   
-  addLog('sheets', `Configurações da Planilha salvas. Usando Planilha: "${planilhaNome}" | Aba: "${abaNome}".`);
+  addLog('sheets', `Configurações da Planilha salvas. Tipo de conexão: ${db.sheetsConfig.tipoConexao} | Planilha: "${planilhaNome}" | Aba: "${abaNome}".`);
   res.json(db.sheetsConfig);
 });
 
@@ -144,9 +250,18 @@ async function runSyncProcess() {
 
   try {
     // Perform paginated fetching
-    const products = await BlingService.fetchAllProducts(
+    const { products, structures } = await BlingService.fetchAllProducts(
       db.blingConfig.clientId,
       db.blingConfig.clientSecret,
+      db.blingConfig.accessToken,
+      db.blingConfig.refreshToken,
+      (newTokens) => {
+        const liveDb = readDb();
+        liveDb.blingConfig.accessToken = newTokens.accessToken;
+        liveDb.blingConfig.refreshToken = newTokens.refreshToken;
+        writeDb(liveDb);
+        addLog('bling', 'Tokens de acesso atualizados com sucesso.');
+      },
       (current, total, percentage, message) => {
         const liveDb = readDb();
         liveDb.progress = {
@@ -168,20 +283,37 @@ async function runSyncProcess() {
     // Save to the database as "clean and rewrite" spreadsheet
     const finalDb = readDb();
     
-    addLog('sheets', 'Limpando linhas anteriores da planilha virtual (preservando cabeçalhos)...');
-    
-    // Simulate Sheets update latency
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    addLog('sheets', `Gravando ${products.length} produtos atualizados na planilha virtual...`);
+    if (finalDb.sheetsConfig.tipoConexao !== 'local') {
+      addLog('sheets', `Iniciando gravação na planilha real do Google Sheets (${finalDb.sheetsConfig.planilhaNome}) via ${finalDb.sheetsConfig.tipoConexao}...`);
+      await SheetsService.syncToGoogleSheets(
+        finalDb.sheetsConfig.tipoConexao,
+        finalDb.sheetsConfig.planilhaId || '',
+        finalDb.sheetsConfig.clientEmail || '',
+        finalDb.sheetsConfig.privateKey || '',
+        finalDb.sheetsConfig.webAppUrl || '',
+        products,
+        structures
+      );
+      addLog('sheets', `Gravação no Google Sheets concluída com sucesso.`);
+    } else {
+      addLog('sheets', 'Limpando linhas anteriores da planilha virtual (preservando cabeçalhos)...');
+      
+      // Simulate Sheets update latency
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      addLog('sheets', `Gravando ${products.length} produtos atualizados na planilha virtual...`);
+    }
     finalDb.products = products;
     
     const durationMs = Date.now() - startTime;
     
-    // Record success history entry
-    addHistory({
-      data: new Date().toISOString().split('T')[0],
-      hora: new Date().toLocaleTimeString('pt-BR'),
+    // Record success history entry atomically inside finalDb
+    const syncDate = new Date().toISOString().split('T')[0];
+    const syncTime = new Date().toLocaleTimeString('pt-BR');
+    finalDb.history.unshift({
+      id: `h-${Date.now()}`,
+      data: syncDate,
+      hora: syncTime,
       usuario: 'projetos.visualsuper@gmail.com',
       quantidadeProdutos: products.length,
       duracaoMs: durationMs,

@@ -176,49 +176,229 @@ export interface SyncProgressCallback {
  */
 export class BlingService {
   /**
-   * Fetches products in a paginated way, providing a progress callback
+   * Refreshes Bling Access Token using refresh token
+   */
+  static async refreshBlingToken(
+    clientId: string,
+    clientSecret: string,
+    refreshToken: string
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    
+    const response = await fetch('https://www.bling.com.br/Api/v3/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${credentials}`
+      },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Falha ao renovar token do Bling: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || refreshToken
+    };
+  }
+
+  /**
+   * Fetches products and structures in a paginated way, providing a progress callback
    */
   static async fetchAllProducts(
     clientId: string,
     clientSecret: string,
+    accessToken: string,
+    refreshToken: string,
+    onTokenRefreshed: (tokens: { accessToken: string; refreshToken: string }) => void,
     onProgress: SyncProgressCallback
-  ): Promise<Product[]> {
-    // If we have actual client parameters that are valid, we could make live calls.
-    // However, given the environment constraints and request to not enforce external connections
-    // that might block, we provide an amazing simulated pipeline that looks exactly like the Bling API
-    // paginating 840 products in chunks.
+  ): Promise<{ products: Product[]; structures: any[] }> {
+    const isRealBling = clientId && clientId.trim() !== '' && !clientId.includes('exemplo') && accessToken && accessToken.trim() !== '';
     
-    const isRealBling = clientId && clientId.trim() !== '' && !clientId.includes('exemplo');
-    
-    if (isRealBling) {
-      // Real API placeholder/draft showing we have structural capability:
-      // In a real scenario, we'd make a call to 'https://api.bling.com.br/v3/produtos' using the Access Token.
-      // But we always ensure the fallback is elegant. Let's do the paginated simulation.
+    if (!isRealBling) {
+      // Return simulation data
+      const TOTAL_PRODUCTS = 300;
+      const PAGE_SIZE = 50;
+      const TOTAL_PAGES = Math.ceil(TOTAL_PRODUCTS / PAGE_SIZE);
+      const allProducts = generateSimulatedProducts(TOTAL_PRODUCTS);
+      const retrievedProducts: Product[] = [];
+      const simulatedStructures: any[] = [];
+      
+      for (let page = 1; page <= TOTAL_PAGES; page++) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        
+        const startIdx = (page - 1) * PAGE_SIZE;
+        const endIdx = Math.min(startIdx + PAGE_SIZE, TOTAL_PRODUCTS);
+        const pageProducts = allProducts.slice(startIdx, endIdx);
+        
+        retrievedProducts.push(...pageProducts);
+        
+        // Generate some compositions for simulated products
+        pageProducts.forEach((p, idx) => {
+          if (idx % 5 === 0) {
+            simulatedStructures.push({
+              idComposicao: p.id,
+              descricaoComposicao: p.nome,
+              codigoComposicao: p.codigo,
+              idComponente: `comp-${p.id}-1`,
+              descricaoComponente: 'Matéria Prima Componente A',
+              codigoComponente: 'COMP-A',
+              quantidadeComponente: 1.5,
+              custoUnitario: 12.50,
+              operacao: 'A'
+            });
+            simulatedStructures.push({
+              idComposicao: p.id,
+              descricaoComposicao: p.nome,
+              codigoComposicao: p.codigo,
+              idComponente: `comp-${p.id}-2`,
+              descricaoComponente: 'Insumo de Embalagem B',
+              codigoComponente: 'COMP-B',
+              quantidadeComponente: 1.0,
+              custoUnitario: 3.20,
+              operacao: 'A'
+            });
+          }
+        });
+
+        const current = retrievedProducts.length;
+        const percentage = Math.round((current / TOTAL_PRODUCTS) * 100);
+        const message = `Lendo produtos simulados (Página ${page}/${TOTAL_PAGES})...`;
+        
+        onProgress(current, TOTAL_PRODUCTS, percentage, message);
+      }
+      
+      return { products: retrievedProducts, structures: simulatedStructures };
     }
+
+    // Real API integration
+    let activeToken = accessToken;
+    let productsList: Product[] = [];
+    let structuresList: any[] = [];
+    let page = 1;
+    let totalItems = 0;
     
-    const TOTAL_PRODUCTS = 840;
-    const PAGE_SIZE = 70;
-    const TOTAL_PAGES = Math.ceil(TOTAL_PRODUCTS / PAGE_SIZE);
-    const allProducts = generateSimulatedProducts(TOTAL_PRODUCTS);
-    const retrievedProducts: Product[] = [];
-    
-    for (let page = 1; page <= TOTAL_PAGES; page++) {
-      // Simulate API latency (e.g. 350ms per page request)
-      await new Promise(resolve => setTimeout(resolve, 350));
+    const fetchPage = async (p: number, token: string): Promise<any> => {
+      // Bling API v3 /produtos endpoint
+      const res = await fetch(`https://api.bling.com.br/v3/produtos?pagina=${p}&limite=100`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       
-      const startIdx = (page - 1) * PAGE_SIZE;
-      const endIdx = Math.min(startIdx + PAGE_SIZE, TOTAL_PRODUCTS);
-      const pageProducts = allProducts.slice(startIdx, endIdx);
+      if (res.status === 401) {
+        // Token expired, trigger refresh
+        const newTokens = await BlingService.refreshBlingToken(clientId, clientSecret, refreshToken);
+        activeToken = newTokens.accessToken;
+        onTokenRefreshed(newTokens);
+        // Retry
+        return fetchPage(p, activeToken);
+      }
+
+      if (!res.ok) {
+        throw new Error(`Erro na API do Bling: ${res.status} - ${await res.text()}`);
+      }
+
+      return res.json();
+    };
+
+    try {
+      let hasMore = true;
+      while (hasMore) {
+        onProgress(productsList.length, totalItems || 100, Math.round((productsList.length / (totalItems || 100)) * 100), `Buscando produtos do Bling (Página ${page})...`);
+        
+        const responseData = await fetchPage(page, activeToken);
+        const pageData = responseData.data || [];
+        
+        if (pageData.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        for (const item of pageData) {
+          const mappedProduct: Product = {
+            id: String(item.id),
+            codigo: item.codigo || '',
+            sku: item.codigo || '',
+            nome: item.nome || '',
+            descricao: item.descricaoCurta || item.nome || '',
+            categoria: item.categoria?.descricao || 'Sem Categoria',
+            marca: item.marca || '',
+            unidade: item.unidade || 'UN',
+            situacao: item.situacao === 'A' ? 'Ativo' : 'Inativo',
+            preco: Number(item.preco) || 0,
+            precoPromocional: 0,
+            estoqueAtual: Number(item.estoque?.saldo) || 0,
+            estoqueMinimo: Number(item.estoque?.minimo) || 0,
+            ncm: item.tributacao?.ncm || '',
+            gtinEan: item.gtin || '',
+            pesoLiquido: Number(item.pesoLiquido) || 0,
+            pesoBruto: Number(item.pesoBruto) || 0,
+            altura: Number(item.dimensoes?.altura) || 0,
+            largura: Number(item.dimensoes?.largura) || 0,
+            comprimento: Number(item.dimensoes?.profundidade) || 0,
+            dataCadastro: new Date().toISOString().split('T')[0],
+            ultimaAtualizacao: new Date().toISOString().split('T')[0]
+          };
+
+          productsList.push(mappedProduct);
+
+          // Extract composition structure if format is 'E' (Estrutura/Composição)
+          if (item.formato === 'E') {
+            try {
+              // Add a small delay to avoid rate limits
+              await new Promise(resolve => setTimeout(resolve, 200));
+              
+              const structRes = await fetch(`https://api.bling.com.br/v3/produtos/estruturas/${item.id}`, {
+                headers: {
+                  'Authorization': `Bearer ${activeToken}`
+                }
+              });
+
+              if (structRes.ok) {
+                const structData = await structRes.json();
+                if (structData.data && structData.data.componentes) {
+                  for (const comp of structData.data.componentes) {
+                    structuresList.push({
+                      idComposicao: String(item.id),
+                      descricaoComposicao: item.nome || '',
+                      codigoComposicao: item.codigo || '',
+                      idComponente: String(comp.produto?.id || ''),
+                      descricaoComponente: comp.produto?.nome || 'Componente',
+                      codigoComponente: comp.produto?.codigo || '',
+                      quantidadeComponente: Number(comp.quantidade) || 1,
+                      custoUnitario: Number(comp.custo) || 0,
+                      operacao: 'A'
+                    });
+                  }
+                }
+              } else {
+                console.error(`Erro ao buscar estrutura do produto ${item.id}: ${structRes.status}`);
+              }
+            } catch (err) {
+              console.error(`Erro ao processar estrutura do produto ${item.id}:`, err);
+            }
+          }
+        }
+
+        // Bling doesn't explicitly return total count sometimes, so page incrementally
+        page++;
+        if (pageData.length < 100) {
+          hasMore = false;
+        }
+      }
       
-      retrievedProducts.push(...pageProducts);
-      
-      const current = retrievedProducts.length;
-      const percentage = Math.round((current / TOTAL_PRODUCTS) * 100);
-      const message = `Lendo produtos (Página ${page}/${TOTAL_PAGES})...`;
-      
-      onProgress(current, TOTAL_PRODUCTS, percentage, message);
+      return { products: productsList, structures: structuresList };
+    } catch (error) {
+      console.error('Erro na sincronização Bling:', error);
+      throw error;
     }
-    
-    return retrievedProducts;
   }
 }
