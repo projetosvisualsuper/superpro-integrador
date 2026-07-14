@@ -1,0 +1,6 @@
+{
+  "name": "VS SuperPro - Integrador",
+  "description": "Dashboard para sincronização de produtos do ERP Bling e visualização de planilhas locais.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
