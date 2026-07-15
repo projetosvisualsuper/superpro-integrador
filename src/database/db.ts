@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Product, SyncHistoryEntry, LogEntry, BlingConfig, SheetsConfig } from '../types';
 
 interface DbSchema {
@@ -177,6 +179,12 @@ const initialDb: DbSchema = {
   ]
 };
 
+// Supabase Client Configuration
+let supabase: SupabaseClient | null = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+  supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+}
+
 // PostgreSQL Connection Pool Configuration
 let pool: Pool | null = null;
 if (process.env.DATABASE_URL) {
@@ -197,6 +205,37 @@ function ensureDirectoryExists(filePath: string) {
 }
 
 export async function readDb(): Promise<DbSchema> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('integrador_config')
+        .select('data')
+        .eq('id', 1)
+        .single();
+      
+      if (!error && data) {
+        return data.data as DbSchema;
+      }
+      
+      if (error) {
+        // If it's a "no rows" error, we can try to initialize it
+        if (error.code === 'PGRST116') {
+          const { error: insertError } = await supabase
+            .from('integrador_config')
+            .insert({ id: 1, data: initialDb });
+          if (!insertError) {
+            return initialDb;
+          }
+        } else {
+          console.warn('Aviso ao ler do Supabase (tabela integrador_config pode não existir):', error.message);
+          console.warn('Caso queira usar o Supabase, crie uma tabela "integrador_config" com colunas: "id" (int8/PK) e "data" (jsonb).');
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao conectar ou ler do Supabase JS:', err);
+    }
+  }
+
   if (pool) {
     try {
       // Ensure config table exists
@@ -236,6 +275,20 @@ export async function readDb(): Promise<DbSchema> {
 }
 
 export async function writeDb(data: DbSchema): Promise<void> {
+  if (supabase) {
+    try {
+      const { error } = await supabase
+        .from('integrador_config')
+        .upsert({ id: 1, data });
+      if (!error) {
+        return;
+      }
+      console.error('Erro ao gravar no Supabase:', error.message);
+    } catch (err) {
+      console.error('Erro ao gravar no Supabase JS:', err);
+    }
+  }
+
   if (pool) {
     try {
       await pool.query('INSERT INTO integrador_config (id, data) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET data = $1', [JSON.stringify(data)]);
