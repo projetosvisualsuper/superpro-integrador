@@ -49,6 +49,18 @@ export default function DashboardView({ token, onNavigateToBling, onNavigateToSh
     return () => clearInterval(interval);
   }, [pollingActive]);
 
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (!pollingActive) {
+      interval = setInterval(() => {
+        checkCurrentProgress();
+        fetchStats();
+        fetchHistory();
+      }, 5000);
+    }
+    return () => clearInterval(interval);
+  }, [pollingActive]);
+
   const fetchInitialData = async () => {
     setIsLoading(true);
     try {

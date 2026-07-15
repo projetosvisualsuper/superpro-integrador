@@ -14,6 +14,32 @@ import { SheetsService } from './src/services/sheets.service';
 const app = express();
 const PORT = 3000;
 
+// Helper to get date and time in America/Sao_Paulo timezone
+function getBrazilDateTime() {
+  const now = new Date();
+  const dtf = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  const parts = dtf.formatToParts(now);
+  const day = parts.find(p => p.type === 'day')?.value;
+  const month = parts.find(p => p.type === 'month')?.value;
+  const year = parts.find(p => p.type === 'year')?.value;
+  const hour = parts.find(p => p.type === 'hour')?.value;
+  const minute = parts.find(p => p.type === 'minute')?.value;
+  const second = parts.find(p => p.type === 'second')?.value;
+  return {
+    date: `${year}-${month}-${day}`,
+    time: `${hour}:${minute}:${second}`
+  };
+}
+
 // Enable JSON body parsing
 app.use(express.json());
 
@@ -309,12 +335,11 @@ async function runSyncProcess() {
     const durationMs = Date.now() - startTime;
     
     // Record success history entry atomically inside finalDb
-    const syncDate = new Date().toISOString().split('T')[0];
-    const syncTime = new Date().toLocaleTimeString('pt-BR');
+    const brazilDateTime = getBrazilDateTime();
     finalDb.history.unshift({
       id: `h-${Date.now()}`,
-      data: syncDate,
-      hora: syncTime,
+      data: brazilDateTime.date,
+      hora: brazilDateTime.time,
       usuario: 'projetos.visualsuper@gmail.com',
       quantidadeProdutos: products.length,
       duracaoMs: durationMs,
@@ -345,9 +370,10 @@ async function runSyncProcess() {
     };
     await writeDb(finalDb);
     
+    const brazilDateTime = getBrazilDateTime();
     await addHistory({
-      data: new Date().toISOString().split('T')[0],
-      hora: new Date().toLocaleTimeString('pt-BR'),
+      data: brazilDateTime.date,
+      hora: brazilDateTime.time,
       usuario: 'projetos.visualsuper@gmail.com',
       quantidadeProdutos: 0,
       duracaoMs: Date.now() - startTime,
