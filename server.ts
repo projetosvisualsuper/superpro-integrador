@@ -502,7 +502,9 @@ app.post('/api/sync/reset', authMiddleware, async (req, res) => {
 // ==========================================
 
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+  
+  if (!isProduction) {
     // Dev Mode: Integrate Vite as Middleware
     const vite = await createViteServer({
       server: { middlewareMode: true },
