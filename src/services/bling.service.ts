@@ -311,18 +311,32 @@ export class BlingService {
 
     try {
       let hasMore = true;
+      const itemsToFetchStructure: { id: string; nome: string; codigo: string }[] = [];
+      let lastPageSize = 100;
+
+      // Phase 1: Fetch all products
       while (hasMore) {
-        onProgress(productsList.length, totalItems || 100, Math.round((productsList.length / (totalItems || 100)) * 100), `Buscando produtos do Bling (Página ${page})...`);
+        const estTotal = lastPageSize === 100 ? (page * 100 + 100) : (productsList.length || 100);
+        const currentProgress = productsList.length;
+        const progressPercent = Math.min(Math.round((currentProgress / estTotal) * 100), 99);
+        
+        onProgress(
+          currentProgress,
+          estTotal,
+          progressPercent,
+          `Buscando lista de produtos do Bling (Página ${page})...`
+        );
         
         const responseData = await fetchPage(page, activeToken);
-        const pageData = responseData.data || [];
+        const pageDataTemp = responseData.data || [];
+        lastPageSize = pageDataTemp.length;
         
-        if (pageData.length === 0) {
+        if (pageDataTemp.length === 0) {
           hasMore = false;
           break;
         }
 
-        for (const item of pageData) {
+        for (const item of pageDataTemp) {
           const mappedProduct: Product = {
             id: String(item.id),
             codigo: item.codigo || '',
@@ -350,12 +364,42 @@ export class BlingService {
 
           productsList.push(mappedProduct);
 
-          // Extract composition structure if format is 'E' (Estrutura/Composição)
           if (item.formato === 'E') {
+            itemsToFetchStructure.push({
+              id: String(item.id),
+              nome: item.nome || '',
+              codigo: item.codigo || ''
+            });
+          }
+        }
+
+        // Bling doesn't explicitly return total count sometimes, so page incrementally
+        page++;
+        if (pageDataTemp.length < 100) {
+          hasMore = false;
+        }
+      }
+
+      // Phase 2: Fetch composition structures in parallel batches
+      const totalStructures = itemsToFetchStructure.length;
+      if (totalStructures > 0) {
+        const batchSize = 5;
+        for (let i = 0; i < totalStructures; i += batchSize) {
+          const batch = itemsToFetchStructure.slice(i, i + batchSize);
+          
+          const overallProgress = productsList.length + i;
+          const overallTotal = productsList.length + totalStructures;
+          const overallPercent = Math.round((overallProgress / overallTotal) * 100);
+          
+          onProgress(
+            overallProgress,
+            overallTotal,
+            overallPercent,
+            `Buscando composições: estrutura ${i + 1} de ${totalStructures}...`
+          );
+          
+          await Promise.all(batch.map(async (item) => {
             try {
-              // Add a small delay to avoid rate limits
-              await new Promise(resolve => setTimeout(resolve, 200));
-              
               const structRes = await fetch(`https://api.bling.com.br/v3/produtos/estruturas/${item.id}`, {
                 headers: {
                   'Authorization': `Bearer ${activeToken}`
@@ -367,9 +411,9 @@ export class BlingService {
                 if (structData.data && structData.data.componentes) {
                   for (const comp of structData.data.componentes) {
                     structuresList.push({
-                      idComposicao: String(item.id),
-                      descricaoComposicao: item.nome || '',
-                      codigoComposicao: item.codigo || '',
+                      idComposicao: item.id,
+                      descricaoComposicao: item.nome,
+                      codigoComposicao: item.codigo,
                       idComponente: String(comp.produto?.id || ''),
                       descricaoComponente: comp.produto?.nome || 'Componente',
                       codigoComponente: comp.produto?.codigo || '',
@@ -385,13 +429,10 @@ export class BlingService {
             } catch (err) {
               console.error(`Erro ao processar estrutura do produto ${item.id}:`, err);
             }
-          }
-        }
-
-        // Bling doesn't explicitly return total count sometimes, so page incrementally
-        page++;
-        if (pageData.length < 100) {
-          hasMore = false;
+          }));
+          
+          // Wait 250ms between batches to respect Bling API rate limits (10-20 requests/sec)
+          await new Promise(resolve => setTimeout(resolve, 250));
         }
       }
       
