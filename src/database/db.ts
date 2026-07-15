@@ -292,13 +292,38 @@ export async function writeDb(data: DbSchema): Promise<void> {
   // Update in-memory cache instantly to make subsequent reads super fast
   cachedDb = data;
 
-  // Persist to underlying DB asynchronously so we don't block the API thread
-  persistDbAsync(data).catch((err) => {
-    console.error('Erro de gravação em segundo plano:', err);
-  });
+  // Persist to underlying DB asynchronously, ensuring no concurrent writes happen
+  triggerPersistDb();
 }
 
-async function persistDbAsync(data: DbSchema): Promise<void> {
+let isPersisting = false;
+let needsPersist = false;
+
+function triggerPersistDb() {
+  if (isPersisting) {
+    needsPersist = true;
+    return;
+  }
+
+  isPersisting = true;
+  needsPersist = false;
+
+  persistDbAsync()
+    .catch((err) => {
+      console.error('Erro de gravação em segundo plano:', err);
+    })
+    .finally(() => {
+      isPersisting = false;
+      if (needsPersist) {
+        triggerPersistDb();
+      }
+    });
+}
+
+async function persistDbAsync(): Promise<void> {
+  const data = cachedDb;
+  if (!data) return;
+
   if (supabase) {
     try {
       const { error } = await supabase
