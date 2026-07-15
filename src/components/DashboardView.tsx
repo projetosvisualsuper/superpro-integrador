@@ -143,6 +143,8 @@ export default function DashboardView({ token, onNavigateToBling, onNavigateToSh
     }
   };
 
+  const [isAbortingSync, setIsAbortingSync] = useState(false);
+
   const handleStartSync = async () => {
     if (progress.status === 'sincronizando') return;
     
@@ -170,6 +172,31 @@ export default function DashboardView({ token, onNavigateToBling, onNavigateToSh
       alert(err.message || 'Falha ao iniciar sincronização.');
     } finally {
       setIsStartingSync(false);
+    }
+  };
+
+  const handleAbortSync = async () => {
+    if (!window.confirm('Tem certeza que deseja abortar a sincronização atual?')) return;
+    setIsAbortingSync(true);
+    try {
+      const response = await fetch('/api/sync/abort', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setProgress(data);
+        setPollingActive(false);
+        fetchStats();
+        fetchHistory();
+      } else {
+        alert('Falha ao abortar a sincronização.');
+      }
+    } catch (err) {
+      console.error('Erro ao abortar:', err);
+      alert('Erro ao tentar abortar a sincronização.');
+    } finally {
+      setIsAbortingSync(false);
     }
   };
 
@@ -272,24 +299,43 @@ export default function DashboardView({ token, onNavigateToBling, onNavigateToSh
           </div>
 
           {/* Sync Trigger CTA */}
-          <div className="my-8 flex flex-col sm:flex-row items-center gap-6 relative z-10">
-            <button
-              onClick={handleStartSync}
-              disabled={progress.status === 'sincronizando' || isStartingSync}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-800 text-white font-semibold text-sm tracking-wide rounded-xl shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/35 transition-all cursor-pointer"
-            >
-              {progress.status === 'sincronizando' ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Sincronizando...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 fill-current" />
-                  Atualizar Produtos
-                </>
+          <div className="my-8 flex flex-col sm:flex-row items-center gap-4 relative z-10">
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+              <button
+                onClick={handleStartSync}
+                disabled={progress.status === 'sincronizando' || isStartingSync}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-800 text-white font-semibold text-sm tracking-wide rounded-xl shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/35 transition-all cursor-pointer font-sans"
+              >
+                {progress.status === 'sincronizando' ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Sincronizando...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 fill-current" />
+                    Atualizar Produtos
+                  </>
+                )}
+              </button>
+
+              {progress.status === 'sincronizando' && (
+                <button
+                  onClick={handleAbortSync}
+                  disabled={isAbortingSync}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-red-500/25 hover:bg-red-500/35 text-red-400 border border-red-500/30 font-semibold text-sm tracking-wide rounded-xl transition-all cursor-pointer disabled:opacity-50 font-sans"
+                >
+                  {isAbortingSync ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Abortando...
+                    </>
+                  ) : (
+                    'Abortar Processo'
+                  )}
+                </button>
               )}
-            </button>
+            </div>
 
             <div className="text-xs text-slate-400 font-mono text-center sm:text-left">
               <span>Webhook Endpoint Ativo:</span>

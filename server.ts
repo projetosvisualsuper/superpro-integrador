@@ -379,6 +379,21 @@ app.get('/api/sync/progress', authMiddleware, async (req, res) => {
   res.json(db.progress);
 });
 
+// Endpoint 2.5: POST /api/sync/abort (Reset stuck sync status to idle)
+app.post('/api/sync/abort', authMiddleware, async (req, res) => {
+  const db = await readDb();
+  db.progress = {
+    status: 'idle',
+    current: 0,
+    total: 0,
+    percentage: 0,
+    message: 'Sincronização cancelada/abortada pelo usuário.'
+  };
+  await writeDb(db);
+  await addLog('performance', 'Sincronização abortada manualmente pelo painel de controle.');
+  res.json(db.progress);
+});
+
 // Endpoint 3: POST /webhook/update-products (Webhook endpoint as requested)
 app.post('/webhook/update-products', async (req, res) => {
   console.log('Webhook de atualização de produtos recebido via POST.');

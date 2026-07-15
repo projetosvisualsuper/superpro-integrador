@@ -204,7 +204,14 @@ function ensureDirectoryExists(filePath: string) {
   }
 }
 
+// In-memory cache for high-performance reading and writing
+let cachedDb: DbSchema | null = null;
+
 export async function readDb(): Promise<DbSchema> {
+  if (cachedDb) {
+    return cachedDb;
+  }
+
   if (supabase) {
     try {
       const { data, error } = await supabase
@@ -214,7 +221,8 @@ export async function readDb(): Promise<DbSchema> {
         .single();
       
       if (!error && data) {
-        return data.data as DbSchema;
+        cachedDb = data.data as DbSchema;
+        return cachedDb;
       }
       
       if (error) {
@@ -224,6 +232,7 @@ export async function readDb(): Promise<DbSchema> {
             .from('integrador_config')
             .insert({ id: 1, data: initialDb });
           if (!insertError) {
+            cachedDb = initialDb;
             return initialDb;
           }
         } else {
@@ -250,9 +259,11 @@ export async function readDb(): Promise<DbSchema> {
       if (res.rows.length === 0) {
         // Initialize config row
         await pool.query('INSERT INTO integrador_config (id, data) VALUES (1, $1)', [JSON.stringify(initialDb)]);
+        cachedDb = initialDb;
         return initialDb;
       }
-      return res.rows[0].data as DbSchema;
+      cachedDb = res.rows[0].data as DbSchema;
+      return cachedDb;
     } catch (error) {
       console.error('Erro ao conectar ou ler do Supabase PostgreSQL:', error);
       // Fallback to local files
@@ -264,17 +275,30 @@ export async function readDb(): Promise<DbSchema> {
     ensureDirectoryExists(DB_FILE);
     if (!fs.existsSync(DB_FILE)) {
       fs.writeFileSync(DB_FILE, JSON.stringify(initialDb, null, 2), 'utf-8');
+      cachedDb = initialDb;
       return initialDb;
     }
     const content = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(content);
+    cachedDb = JSON.parse(content);
+    return cachedDb!;
   } catch (error) {
     console.error('Erro ao ler banco de dados JSON local:', error);
+    cachedDb = initialDb;
     return initialDb;
   }
 }
 
 export async function writeDb(data: DbSchema): Promise<void> {
+  // Update in-memory cache instantly to make subsequent reads super fast
+  cachedDb = data;
+
+  // Persist to underlying DB asynchronously so we don't block the API thread
+  persistDbAsync(data).catch((err) => {
+    console.error('Erro de gravação em segundo plano:', err);
+  });
+}
+
+async function persistDbAsync(data: DbSchema): Promise<void> {
   if (supabase) {
     try {
       const { error } = await supabase
