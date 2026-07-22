@@ -430,6 +430,19 @@ app.post('/webhook/update-products', async (req, res) => {
     return res.status(409).json({ error: 'Sync already running.' });
   }
 
+  // Check if a sync has already succeeded today (Brazil Time)
+  const todayStr = getBrazilDateTime().date;
+  const alreadySyncedToday = db.history.some(h => h.data === todayStr && h.status.toLowerCase() === 'sucesso');
+  
+  if (alreadySyncedToday) {
+    await addLog('bling', `Chamada recebida no webhook ignorada: sincronização já realizada hoje (${todayStr}).`);
+    return res.json({
+      status: 'ignored',
+      message: `Sincronização já realizada hoje (${todayStr}). Limite de 1 vez por dia ativo.`,
+      endpoint: '/webhook/update-products'
+    });
+  }
+
   await addLog('bling', 'Webhook /webhook/update-products disparado com sucesso.');
   
   // We can trigger synchronously or asynchronously.
